@@ -12325,6 +12325,9 @@ int main(int argc, char** argv) {
   init_system();
   init_target();
   init_kernel();
+  
+  printf("%s: This is Fatima Zahra En-Nasiry's Selfie\n", selfie_name);
+  print("This is Fatima Zahra En-Nasiry's Selfie");
 
   exit_code = selfie(0);
 
