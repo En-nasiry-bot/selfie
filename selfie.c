@@ -469,6 +469,8 @@ uint64_t SYM_LEQ          = 26; // <=
 uint64_t SYM_GT           = 27; // >
 uint64_t SYM_GEQ          = 28; // >=
 uint64_t SYM_ELLIPSIS     = 29; // ...
+uint64_t SYM_SHIFTRIGHT   = 34; // >>
+uint64_t SYM_SHIFTLEFT    = 35; // <<
 
 // symbols for bootstrapping
 
@@ -514,7 +516,7 @@ uint64_t source_fd   = 0; // file descriptor of open source file
 // ------------------------- INITIALIZATION ------------------------
 
 void init_scanner () {
-  SYMBOLS = smalloc((SYM_CONST + 1) * sizeof(uint64_t*));
+  SYMBOLS = smalloc((SYM_SHIFTLEFT + 1) * sizeof(uint64_t*));
 
   *(SYMBOLS + SYM_INTEGER)      = (uint64_t) "integer";
   *(SYMBOLS + SYM_CHARACTER)    = (uint64_t) "character";
@@ -546,6 +548,8 @@ void init_scanner () {
   *(SYMBOLS + SYM_GT)           = (uint64_t) ">";
   *(SYMBOLS + SYM_GEQ)          = (uint64_t) ">=";
   *(SYMBOLS + SYM_ELLIPSIS)     = (uint64_t) "...";
+  *(SYMBOLS + SYM_SHIFTLEFT)     = (uint64_t) "<<";
+  *(SYMBOLS + SYM_SHIFTRIGHT)     = (uint64_t) ">>";
 
   *(SYMBOLS + SYM_INT)      = (uint64_t) "int";
   *(SYMBOLS + SYM_CHAR)     = (uint64_t) "char";
@@ -685,6 +689,7 @@ uint64_t is_plus_or_minus();
 uint64_t is_mult_or_div_or_rem();
 uint64_t is_factor();
 uint64_t is_literal();
+uint64_t is_bitshift();
 
 uint64_t is_neither_rbrace_nor_eof();
 uint64_t is_possibly_parameter(uint64_t is_already_variadic);
@@ -729,6 +734,7 @@ void compile_assignment(char* variable);
 
 uint64_t compile_expression(); // returns type
 uint64_t compile_arithmetic(); // returns type
+uint64_t compile_bitshift();
 uint64_t compile_term();       // returns type
 uint64_t compile_factor();     // returns type
 
@@ -1017,6 +1023,8 @@ uint64_t F3_SW    = 2; // 010
 uint64_t F3_BEQ   = 0; // 000
 uint64_t F3_JALR  = 0; // 000
 uint64_t F3_ECALL = 0; // 000
+uint64_t F3_ARTSLL = 1; // 001
+uint64_t F3_ARTSRL = 5; // 101
 
 // f7-codes
 uint64_t F7_ADD  = 0;  // 0000000
@@ -1025,6 +1033,8 @@ uint64_t F7_SUB  = 32; // 0100000
 uint64_t F7_DIVU = 1;  // 0000001
 uint64_t F7_REMU = 1;  // 0000001
 uint64_t F7_SLTU = 0;  // 0000000
+uint64_t F7_ARTSLL = 0;
+uint64_t F7_ARTSRL = 0;
 
 // f12-codes (immediates)
 uint64_t F12_ECALL = 0; // 000000000000
@@ -1079,6 +1089,8 @@ void emit_mul(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_divu(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_remu(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_sltu(uint64_t rd, uint64_t rs1, uint64_t rs2);
+void emit_sll(uint64_t rd, uint64_t rs1, uint64_t rs2);
+void emit_srl(uint64_t rd, uint64_t rs1, uint64_t rs2);
 
 void emit_load(uint64_t rd, uint64_t rs1, uint64_t immediate);
 void emit_store(uint64_t rs1, uint64_t immediate, uint64_t rs2);
@@ -1207,6 +1219,8 @@ uint64_t ic_beq   = 0;
 uint64_t ic_jal   = 0;
 uint64_t ic_jalr  = 0;
 uint64_t ic_ecall = 0;
+uint64_t ic_sll = 0;
+uint64_t ic_srl = 0;
 
 // data counters
 
@@ -1258,6 +1272,8 @@ void reset_binary_counters() {
   ic_jal   = 0;
   ic_jalr  = 0;
   ic_ecall = 0;
+  ic_sll = 0;
+  ic_srl = 0;
 
   dc_global_variable = 0;
   dc_string          = 0;
@@ -3846,12 +3862,11 @@ void get_symbol() {
   uint64_t i;
 
   // reset previously scanned symbol
-  symbol      = SYM_EOF;
-  macro_const = (char*) 0;
-  identifier  = (char*) 0;
-  integer     = (char*) 0;
-  literal     = 0;
-  string      = (char*) 0;
+  symbol     = SYM_EOF;
+  identifier = (char*) 0;
+  integer    = (char*) 0;
+  literal    = 0;
+  string     = (char*) 0;
 
   if (find_next_character() != CHAR_EOF) {
     if (symbol != SYM_DIVISION) {
@@ -3860,38 +3875,7 @@ void get_symbol() {
 
       // start state of finite state machine
       // for recognizing C* symbols is here
-      if (character == CHAR_UNDERSCORE) {
-        // something starting with an underscore is interpreted as macro constant
-        macro_const = string_alloc(MAX_IDENTIFIER_LENGTH);
-
-        i = 0;
-
-        while (is_character_letter_or_digit_or_underscore()) {
-          if (i >= MAX_IDENTIFIER_LENGTH) {
-            syntax_error_message("macro constant identifier too long");
-
-            exit(EXITCODE_SCANNERERROR);
-          }
-
-          store_character(macro_const, i, character);
-
-          i = i + 1;
-
-          get_character();
-        }
-
-        store_character(macro_const, i, 0); // null-terminated string
-
-        if (string_compare("__LINE__", macro_const)) {
-          literal = line_number;
-          symbol = SYM_INTEGER;
-        } else if (string_compare("__func__", macro_const)) {
-          string = get_string(current_procedure);
-          symbol = SYM_STRING;
-        } else {
-          syntax_error_message("unrecognized macro constant");
-        }
-      } else if (is_letter(character)) {
+      if (is_letter(character)) {
         // accommodate identifier and null for termination
         identifier = string_alloc(MAX_IDENTIFIER_LENGTH);
 
@@ -3924,7 +3908,7 @@ void get_symbol() {
           // 0 is 0, not 00, 000, etc.
           get_character();
 
-          literal = 0;
+          literal = 0; // 0
 
           if (character =='x') {  //x
 
@@ -3955,12 +3939,9 @@ void get_symbol() {
            // symbol = SYM_INTEGER; // might not need it
 
           }
-          
+
         } else {
           // accommodate integer and null for termination
-          integer = string_alloc(MAX_INTEGER_LENGTH);
-
-          i = 0;
 
           while (is_digit(character)) {
             if (i >= MAX_INTEGER_LENGTH) {
@@ -4123,6 +4104,10 @@ void get_symbol() {
           get_character();
 
           symbol = SYM_LEQ;
+        } else if (character == CHAR_LT) {
+          get_character();
+
+          symbol = SYM_SHIFTLEFT;
         } else
           symbol = SYM_LT;
       } else if (character == CHAR_GT) {
@@ -4132,7 +4117,11 @@ void get_symbol() {
           get_character();
 
           symbol = SYM_GEQ;
-        } else
+        } else if (character == CHAR_GT){
+          get_character();
+
+          symbol = SYM_SHIFTRIGHT;
+        }else
           symbol = SYM_GT;
       } else if (character == CHAR_DOT) {
         get_character();
@@ -4422,6 +4411,16 @@ uint64_t is_plus_or_minus() {
   else if (symbol == SYM_MINUS)
     return 1;
   else
+    return 0;
+}
+
+uint64_t is_bitshift(){
+
+  if (symbol == SYM_SHIFTLEFT) 
+    return 1;
+  else if (symbol == SYM_SHIFTRIGHT)
+    return 1;
+  else 
     return 0;
 }
 
@@ -5062,7 +5061,7 @@ uint64_t compile_expression() {
 
   // assert: n = allocated_temporaries
 
-  ltype = compile_arithmetic();
+  ltype = compile_bitshift();
 
   // assert: allocated_temporaries == n + 1
 
@@ -5072,7 +5071,7 @@ uint64_t compile_expression() {
 
     get_symbol();
 
-    rtype = compile_arithmetic();
+    rtype = compile_bitshift();
 
     // assert: allocated_temporaries == n + 2
 
@@ -5131,6 +5130,43 @@ uint64_t compile_expression() {
   // assert: allocated_temporaries == n + 1
 
   // type of expression is grammar attribute
+  return ltype;
+}
+
+uint64_t compile_bitshift() {
+  uint64_t ltype;
+  uint64_t operator_symbol;
+  uint64_t rtype;
+
+  // assert: n = allocated_temporaries
+
+  ltype = compile_arithmetic();
+
+  // assert: allocated_temporaries == n + 1
+
+  while (is_bitshift()) {
+    operator_symbol = symbol;
+
+    get_symbol();
+
+    rtype = compile_arithmetic();
+
+    // assert: allocated_temporaries == n + 2
+
+    if (ltype != rtype)
+      type_warning(ltype, rtype);
+
+    if (operator_symbol == SYM_SHIFTLEFT)
+      emit_sll(previous_temporary(), previous_temporary(), current_temporary());
+    else if (operator_symbol == SYM_SHIFTRIGHT)
+      emit_srl(previous_temporary(), previous_temporary(), current_temporary());
+
+    tfree(1);
+  }
+
+  // assert: allocated_temporaries == n + 1
+
+  // type of term is grammar attribute
   return ltype;
 }
 
@@ -7179,6 +7215,18 @@ void emit_add(uint64_t rd, uint64_t rs1, uint64_t rs2) {
   emit_instruction(encode_r_format(F7_ADD, rs2, rs1, F3_ADD, rd, OP_OP));
 
   ic_add = ic_add + 1;
+}
+
+void emit_sll(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_ARTSLL, rs2, rs1, F3_ARTSLL, rd, OP_OP));
+
+  ic_sll = ic_sll + 1;
+}
+
+void emit_srl(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_ARTSRL, rs2, rs1, F3_ARTSRL, rd, OP_OP));
+
+  ic_srl = ic_srl + 1;
 }
 
 void emit_sub(uint64_t rd, uint64_t rs1, uint64_t rs2) {
