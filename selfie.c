@@ -471,6 +471,10 @@ uint64_t SYM_GEQ          = 28; // >=
 uint64_t SYM_ELLIPSIS     = 29; // ...
 uint64_t SYM_SHIFTRIGHT   = 34; // >>
 uint64_t SYM_SHIFTLEFT    = 35; // <<
+uint64_t SYM_AND          = 36; // &
+uint64_t SYM_OR           = 37; // |
+uint64_t SYM_XOR          = 38; // ^
+uint64_t SYM_NOT          = 39; // ~
 
 // symbols for bootstrapping
 
@@ -516,7 +520,7 @@ uint64_t source_fd   = 0; // file descriptor of open source file
 // ------------------------- INITIALIZATION ------------------------
 
 void init_scanner () {
-  SYMBOLS = smalloc((SYM_SHIFTLEFT + 1) * sizeof(uint64_t*));
+  SYMBOLS = smalloc((SYM_NOT + 1) * sizeof(uint64_t*));
 
   *(SYMBOLS + SYM_INTEGER)      = (uint64_t) "integer";
   *(SYMBOLS + SYM_CHARACTER)    = (uint64_t) "character";
@@ -550,6 +554,10 @@ void init_scanner () {
   *(SYMBOLS + SYM_ELLIPSIS)     = (uint64_t) "...";
   *(SYMBOLS + SYM_SHIFTLEFT)     = (uint64_t) "<<";
   *(SYMBOLS + SYM_SHIFTRIGHT)     = (uint64_t) ">>";
+  *(SYMBOLS + SYM_AND)     = (uint64_t) "&";
+  *(SYMBOLS + SYM_OR)     = (uint64_t) "|";
+  *(SYMBOLS + SYM_XOR)     = (uint64_t) "^";
+  *(SYMBOLS + SYM_NOT)     = (uint64_t) "~";
 
   *(SYMBOLS + SYM_INT)      = (uint64_t) "int";
   *(SYMBOLS + SYM_CHAR)     = (uint64_t) "char";
@@ -690,6 +698,7 @@ uint64_t is_mult_or_div_or_rem();
 uint64_t is_factor();
 uint64_t is_literal();
 uint64_t is_bitshift();
+uint64_t is_and_xor_or();
 
 uint64_t is_neither_rbrace_nor_eof();
 uint64_t is_possibly_parameter(uint64_t is_already_variadic);
@@ -737,6 +746,8 @@ uint64_t compile_arithmetic(); // returns type
 uint64_t compile_bitshift();
 uint64_t compile_term();       // returns type
 uint64_t compile_factor();     // returns type
+uint64_t compile_and();
+uint64_t compile_or();
 
 void load_small_and_medium_integer(uint64_t reg, uint64_t value);
 void load_big_integer(uint64_t value);
@@ -1025,6 +1036,9 @@ uint64_t F3_JALR  = 0; // 000
 uint64_t F3_ECALL = 0; // 000
 uint64_t F3_ARTSLL = 1; // 001
 uint64_t F3_ARTSRL = 5; // 101
+uint64_t F3_AND    = 7; // 111
+uint64_t F3_OR     = 6; // 110
+uint64_t F3_XORI   = 4; // 100
 
 // f7-codes
 uint64_t F7_ADD  = 0;  // 0000000
@@ -1035,6 +1049,8 @@ uint64_t F7_REMU = 1;  // 0000001
 uint64_t F7_SLTU = 0;  // 0000000
 uint64_t F7_ARTSLL = 0;
 uint64_t F7_ARTSRL = 0;
+uint64_t F7_AND    = 0; // 111
+uint64_t F7_OR     = 0; // 110
 
 // f12-codes (immediates)
 uint64_t F12_ECALL = 0; // 000000000000
@@ -1091,6 +1107,9 @@ void emit_remu(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_sltu(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_sll(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_srl(uint64_t rd, uint64_t rs1, uint64_t rs2);
+void emit_xori(uint64_t rd, uint64_t rs1, uint64_t immediate);
+void emit_and(uint64_t rd, uint64_t rs1, uint64_t rs2); 
+void emit_or(uint64_t rd, uint64_t rs1, uint64_t rs2);
 
 void emit_load(uint64_t rd, uint64_t rs1, uint64_t immediate);
 void emit_store(uint64_t rs1, uint64_t immediate, uint64_t rs2);
@@ -1221,6 +1240,9 @@ uint64_t ic_jalr  = 0;
 uint64_t ic_ecall = 0;
 uint64_t ic_sll = 0;
 uint64_t ic_srl = 0;
+uint64_t ic_xori  = 0;
+uint64_t ic_and   = 0;
+uint64_t ic_or    = 0;
 
 // data counters
 
@@ -1274,6 +1296,9 @@ void reset_binary_counters() {
   ic_ecall = 0;
   ic_sll = 0;
   ic_srl = 0;
+  ic_xori  = 0;
+  ic_and   = 0;
+  ic_or    = 0;
 
   dc_global_variable = 0;
   dc_string          = 0;
@@ -1654,6 +1679,10 @@ uint64_t JALR  = 13;
 uint64_t ECALL = 14;
 uint64_t SLL = 15;
 uint64_t SRL = 16;
+uint64_t AND = 17;
+uint64_t OR =  18;
+uint64_t XORI = 19;
+uint64_t NOT = 20;
 
 uint64_t* MNEMONICS; // assembly mnemonics of instructions
 
@@ -1685,7 +1714,7 @@ void reset_disassembler() {
 }
 
 void init_disassembler() {
-  MNEMONICS = smalloc((SRL + 1) * sizeof(uint64_t*));
+  MNEMONICS = smalloc((XORI + 1) * sizeof(uint64_t*));
 
   *(MNEMONICS + LUI)   = (uint64_t) "lui";
   *(MNEMONICS + ADDI)  = (uint64_t) "addi";
@@ -1697,6 +1726,9 @@ void init_disassembler() {
   *(MNEMONICS + SLTU)  = (uint64_t) "sltu";
   *(MNEMONICS + SLL)  = (uint64_t) "sll";
   *(MNEMONICS + SRL)  = (uint64_t) "srl";
+  *(MNEMONICS + AND)  = (uint64_t) "and";
+  *(MNEMONICS + OR)  = (uint64_t) "or";
+  *(MNEMONICS + XORI)  = (uint64_t) "xori";
 
   reset_disassembler();
 
@@ -1852,6 +1884,9 @@ uint64_t nopc_jal   = 0;
 uint64_t nopc_jalr  = 0;
 uint64_t nopc_sll   = 0;
 uint64_t nopc_srl   = 0;
+uint64_t nopc_xori  = 0;
+uint64_t nopc_and   = 0;
+uint64_t nopc_or    = 0;
 
 // source profile
 
@@ -4083,7 +4118,20 @@ void get_symbol() {
         get_character();
 
         symbol = SYM_ASTERISK;
-      } else if (character == CHAR_PERCENTAGE) {
+      } else if (character == CHAR_NOT) {
+        get_character();
+
+        symbol = SYM_NOT;
+      } else if (character == CHAR_AND) {
+        get_character();
+
+        symbol = SYM_AND;
+      } else if (character == CHAR_OR) {
+        get_character();
+
+        symbol = SYM_OR;
+      }
+       else if (character == CHAR_PERCENTAGE) {
         get_character();
 
         symbol = SYM_REMAINDER;
@@ -4432,6 +4480,18 @@ uint64_t is_bitshift(){
     return 0;
 }
 
+uint64_t is_and_xor_or(){
+
+  if (symbol == SYM_AND) 
+    return 1;
+  else if (symbol == SYM_XOR)
+    return 1;
+  else if (symbol == SYM_OR)
+    return 1;
+  else 
+    return 0;
+}
+
 uint64_t is_mult_or_div_or_rem() {
   if (symbol == SYM_ASTERISK)
     return 1;
@@ -4449,6 +4509,8 @@ uint64_t is_factor() {
   else if (symbol == SYM_MINUS)
     return 1;
   else if (symbol == SYM_ASTERISK)
+    return 1;
+  else if (symbol == SYM_NOT)
     return 1;
   else if (symbol == SYM_SIZEOF)
     return 1;
@@ -5069,7 +5131,7 @@ uint64_t compile_expression() {
 
   // assert: n = allocated_temporaries
 
-  ltype = compile_bitshift();
+  ltype = compile_or();
 
   // assert: allocated_temporaries == n + 1
 
@@ -5079,7 +5141,7 @@ uint64_t compile_expression() {
 
     get_symbol();
 
-    rtype = compile_bitshift();
+    rtype = compile_or();
 
     // assert: allocated_temporaries == n + 2
 
@@ -5174,6 +5236,79 @@ uint64_t compile_bitshift() {
 
   // assert: allocated_temporaries == n + 1
 
+  // type of term is grammar attribute
+  return ltype;
+}
+
+uint64_t compile_and() {
+  uint64_t ltype;
+  uint64_t operator_symbol;
+  uint64_t rtype;
+
+  // assert: n = allocated_temporaries
+
+  ltype = compile_bitshift();
+
+  // assert: allocated_temporaries == n + 1
+
+  while (symbol == SYM_AND) {
+    operator_symbol = symbol;
+
+    get_symbol();
+
+    rtype = compile_bitshift();
+
+    // assert: allocated_temporaries == n + 2
+
+    if (ltype != rtype)
+      type_warning(ltype, rtype);
+
+    if (operator_symbol == SYM_AND)
+      emit_and(previous_temporary(), previous_temporary(), current_temporary());
+    
+    tfree(1);
+  }
+
+  
+  // assert: allocated_temporaries == n + 1
+  
+  // type of term is grammar attribute
+  return ltype;
+}
+
+uint64_t compile_or() {
+  uint64_t ltype;
+  uint64_t operator_symbol;
+  uint64_t rtype;
+
+  // assert: n = allocated_temporaries
+
+  ltype = compile_and();
+
+  // assert: allocated_temporaries == n + 1
+
+  while (symbol == SYM_OR) {
+    operator_symbol = symbol;
+
+
+    get_symbol();
+
+    rtype = compile_and();
+
+    // assert: allocated_temporaries == n + 2
+
+    if (ltype != rtype)
+      type_warning(ltype, rtype);
+
+    if (operator_symbol == SYM_OR)
+      emit_or(previous_temporary(), previous_temporary(), current_temporary());
+    
+    tfree(1);
+  }
+
+  
+  // assert: allocated_temporaries == n + 1
+  
   // type of term is grammar attribute
   return ltype;
 }
@@ -5293,6 +5428,7 @@ uint64_t compile_factor() {
   uint64_t cast;
   uint64_t type;
   uint64_t negative;
+  uint64_t not;
   uint64_t dereference;
   char* variable_or_procedure;
 
@@ -5338,6 +5474,13 @@ uint64_t compile_factor() {
     integer_is_signed = 0;
   } else
     negative = 0;
+
+  if (symbol == SYM_NOT) {
+    not = 1;
+
+    get_symbol();
+  } else 
+    not = 0;
   // optional: "*"
   if (symbol == SYM_ASTERISK) {
     dereference = 1;
@@ -5423,6 +5566,15 @@ uint64_t compile_factor() {
     }
     // subtract from 0
     emit_sub(current_temporary(), REG_ZR, current_temporary());
+  }
+  if (not) {
+    if (type != UINT64_T) {
+      type_warning(UINT64_T, type);
+
+      type = UINT64_T;
+    }
+    // Operation on how it looks in our assembly
+    emit_xori(current_temporary(), current_temporary(), -1);
   }
 
   // assert: allocated_temporaries == n + 1
@@ -7037,10 +7189,10 @@ void decode_u_format() {
 // -----------------------------------------------------------------
 
 uint64_t get_total_number_of_instructions() {
-  return ic_lui + ic_addi + ic_add + ic_sub + ic_mul + ic_sll + ic_srl + ic_divu + ic_remu + ic_sltu + ic_load + ic_store + ic_beq + ic_jal + ic_jalr + ic_ecall;
+  return ic_lui + ic_addi + ic_xori + ic_and + ic_or + ic_add + ic_sub + ic_mul + ic_sll + ic_srl + ic_divu + ic_remu + ic_sltu + ic_load + ic_store + ic_beq + ic_jal + ic_jalr + ic_ecall;
 }
 uint64_t get_total_number_of_nops() {
-  return nopc_lui + nopc_addi + nopc_add + nopc_sub + nopc_sll + nopc_srl + nopc_mul + nopc_divu + nopc_remu + nopc_sltu + nopc_load + nopc_store + nopc_beq + nopc_jal + nopc_jalr;
+  return nopc_lui + nopc_addi + nopc_xori + nopc_and + nopc_or + nopc_add + nopc_sub + nopc_sll + nopc_srl + nopc_mul + nopc_divu + nopc_remu + nopc_sltu + nopc_load + nopc_store + nopc_beq + nopc_jal + nopc_jalr;
 }
 
 void print_instruction_counter(uint64_t counter, uint64_t ins) {
@@ -7220,6 +7372,24 @@ void emit_addi(uint64_t rd, uint64_t rs1, uint64_t immediate) {
   emit_instruction(encode_i_format(immediate, rs1, F3_ADDI, rd, OP_IMM));
 
   ic_addi = ic_addi + 1;
+}
+
+void emit_xori(uint64_t rd, uint64_t rs1, uint64_t immediate) {
+  emit_instruction(encode_i_format(immediate, rs1, F3_XORI, rd, OP_IMM));
+
+  ic_xori = ic_xori + 1;
+}
+
+void emit_and(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_AND, rs2, rs1, F3_AND, rd, OP_OP));
+
+  ic_and = ic_and + 1;
+}
+
+void emit_or(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_OR, rs2, rs1, F3_OR, rd, OP_OP));
+
+  ic_or = ic_or + 1;
 }
 
 void emit_add(uint64_t rd, uint64_t rs1, uint64_t rs2) {
@@ -9111,6 +9281,81 @@ void do_addi() {
   ic_addi = ic_addi + 1;
 }
 
+
+void do_xori() {
+  // add immediate
+
+  uint64_t next_rd_value;
+
+  // tolerate unwrapped values in register-to-register transfers
+  read_register_check_wrap(rs1, imm);
+
+  if (rd != REG_ZR) {
+    // semantics of addi
+    next_rd_value = ((*(registers + rs1) & ~imm) | (~*(registers + rs1) & imm));
+
+    if (*(registers + rd) != next_rd_value)
+      *(registers + rd) = next_rd_value;
+    else
+      nopc_xori = nopc_xori + 1;
+  } else
+    nopc_xori = nopc_xori + 1;
+
+  write_register(rd);
+
+  pc = pc + INSTRUCTIONSIZE;
+
+  ic_xori = ic_xori + 1;
+}
+
+void do_and() {
+  uint64_t next_rd_value;
+
+  read_register(rs1);
+  read_register(rs2);
+
+  if (rd != REG_ZR) {
+    // semantics of and
+    next_rd_value = *(registers + rs1) & *(registers + rs2);
+
+    if (*(registers + rd) != next_rd_value)
+      *(registers + rd) = next_rd_value;
+    else
+      nopc_and = nopc_and + 1;
+  } else
+    nopc_and = nopc_and + 1;
+
+  write_register(rd);
+
+  pc = pc + INSTRUCTIONSIZE;
+
+  ic_and = ic_and + 1;
+}
+
+void do_or() {
+  uint64_t next_rd_value;
+
+  read_register(rs1);
+  read_register(rs2);
+
+  if (rd != REG_ZR) {
+    // semantics of and
+    next_rd_value = *(registers + rs1) | *(registers + rs2);
+
+    if (*(registers + rd) != next_rd_value)
+      *(registers + rd) = next_rd_value;
+    else
+      nopc_or = nopc_or + 1;
+  } else
+    nopc_or = nopc_or + 1;
+
+  write_register(rd);
+
+  pc = pc + INSTRUCTIONSIZE;
+
+  ic_or = ic_or + 1;
+}
+
 uint64_t print_add_sub_mul_divu_remu_sltu() {
   return print_code_context_for_instruction(pc)
     + printf_or_write(sprintf(string_buffer, "%s %s,%s,%s",
@@ -9834,6 +10079,12 @@ uint64_t print_instruction() {
     return print_add_sub_mul_divu_remu_sltu();
   else if (is == SUB)
     return print_add_sub_mul_divu_remu_sltu();
+  else if (is == XORI)
+    return print_addi();
+  else if (is == AND)
+    return print_add_sub_mul_divu_remu_sltu();
+  else if (is == OR)
+    return print_add_sub_mul_divu_remu_sltu();
   else if (is == SLL)
     return print_add_sub_mul_divu_remu_sltu();
   else if (is == SRL)
@@ -10112,6 +10363,8 @@ void decode() {
 
     if (funct3 == F3_ADDI)
       is = ADDI;
+    if (funct3 == F3_XORI)
+      is = XORI;
   } else if (opcode == OP_LOAD) {
     decode_i_format();
 
@@ -10134,7 +10387,7 @@ void decode() {
     if (funct3 == F3_ADD) { // = F3_SUB = F3_MUL
       if (funct7 == F7_ADD)
         is = ADD;
-      else if (funct7 == F7_SUB)
+      else if (funct7 == F7_SUB) // my check for sll or srl has to follow precedence so has to be before comparsion but after addition and multiplication
         is = SUB;
       else if (funct7 == F7_MUL)
         is = MUL;
@@ -10150,9 +10403,13 @@ void decode() {
     } else if (funct3 == F3_REMU) {
       if (funct7 == F7_REMU)
         is = REMU;
+      if (funct7 == F7_AND) 
+        is = AND;
+    } else if (funct3 == F3_OR) {
+        is = OR;
     } else if (funct3 == F3_SLTU) {
-      if (funct7 == F7_SLTU)
-        is = SLTU;
+        if (funct7 == F7_SLTU)
+          is = SLTU;
     }
   } else if (opcode == OP_BRANCH) {
     decode_b_format();
@@ -10215,6 +10472,12 @@ void execute() {
     do_add();
   else if (is == SUB)
     do_sub();
+  else if (is == XORI)
+    do_xori();
+  else if (is == AND)
+    do_and();
+  else if (is == OR)
+    do_or();
   else if (is == SLL)
     do_sll();
   else if (is == SRL)
@@ -10256,6 +10519,15 @@ void execute_record() {
   } else if (is == SUB) {
     record_lui_addi_add_sub_mul_divu_remu_sltu_jal_jalr();
     do_sub();
+  } else if (is == XORI) {
+    record_lui_addi_add_sub_mul_divu_remu_sltu_jal_jalr();
+    do_xori();
+  } else if (is == AND) {
+    record_lui_addi_add_sub_mul_divu_remu_sltu_jal_jalr();
+    do_and();
+  } else if (is == OR) {
+    record_lui_addi_add_sub_mul_divu_remu_sltu_jal_jalr();
+    do_or();
   } else if (is == SLL) {
     record_lui_addi_add_sub_mul_divu_remu_sltu_jal_jalr();
     do_sll();
@@ -10326,6 +10598,26 @@ void execute_debug() {
   } else if (is == SUB) {
     print_add_sub_mul_divu_remu_sltu_before();
     do_sub();
+    print_addi_add_sub_mul_divu_remu_sltu_after();
+  } else if (is == XORI) {
+    print_addi_before();
+    do_xori();
+    print_addi_add_sub_mul_divu_remu_sltu_after();
+  } else if (is == AND) {
+    print_add_sub_mul_divu_remu_sltu_before();
+    do_and();
+    print_addi_add_sub_mul_divu_remu_sltu_after();
+  } else if (is == OR) {
+    print_add_sub_mul_divu_remu_sltu_before();
+    do_or();
+    print_addi_add_sub_mul_divu_remu_sltu_after();
+  } else if (is == SLL) {
+    print_add_sub_mul_divu_remu_sltu_before();
+    do_sll();
+    print_addi_add_sub_mul_divu_remu_sltu_after();
+  } else if (is == SRL) {
+    print_add_sub_mul_divu_remu_sltu_before();
+    do_srl();
     print_addi_add_sub_mul_divu_remu_sltu_after();
   } else if (is == MUL) {
     print_add_sub_mul_divu_remu_sltu_before();
