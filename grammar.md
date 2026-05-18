@@ -8,14 +8,15 @@ This is the grammar of the C Star (C\*) programming language.
 
 C\* is a tiny subset of the programming language C. C\* features global variable declarations with optional initialization as well as procedures with parameters and local variables. C\* has five statements (assignment, while loop, if-then-else, procedure call, and return) and standard arithmetic (`+`, `-`, `*`, `/`, `%`) and comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`) operators over variables and procedure calls as well as integer, character, and string literals. C\* includes the unary `*` operator for dereferencing pointers hence the name but excludes data types other than `uint64_t` and `uint64_t*`, bitwise and Boolean operators, and many other features. The C\* grammar is LL(1) with 7 keywords and 22 symbols. Whitespace as well as single-line (`//`) and multi-line (`/*` to `*/`) comments are ignored.
 
-C\* Keywords: `uint64_t`, `void`, `sizeof`, `if`, `else`, `while`, `return`
+C\* Keywords: `uint64_t`, `void`, `sizeof`, `if`, `else`, `while`, `for`,`return`
 
-C\* Symbols: `integer`, `character`, `string`, `identifier`, `,`, `;`, `(`, `)`, `{`, `}`, `+`, `-`, `*`, `/`, `%`, `=`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `...`
+C\* Symbols: `integer`, `character`, `string`, `identifier`, `,`, `;`, `(`, `)`, `{`, `}`, `[`, `]`, `+`, `-`, `*`, `/`, `%`, `=`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `<<`, `>>`, `&`, `|`, `~`, `&&`, `||`, `!`,`...`
+
 
 with:
 
 ```
-integer    = digit { digit } .
+integer    = digit { digit } | ( "0x" | "0X" ) hex_digit { hex_digit } .
 
 character  = "'" printable_character "'" .
 
@@ -29,6 +30,8 @@ and:
 ```
 digit  = "0" | ... | "9" .
 
+hex_digit = digit | "a" | ... | "f" | "A" | ... | "F" .
+
 letter = "a" | ... | "z" | "A" | ... | "Z" .
 ```
 
@@ -37,7 +40,7 @@ C\* Grammar:
 ```
 cstar      = { variable [ initialize ] ";" | procedure } .
 
-variable   = type identifier .
+variable   = type identifier [ "[" integer "]" ] .
 
 type       = "uint64_t" [ "*" ] .
 
@@ -49,31 +52,45 @@ value      = integer | character .
 
 statement  = assignment ";" | if | while | call ";" | return ";" .
 
-assignment = ( [ "*" ] identifier | "*" "(" arithmetic ")" ) "=" expression .
+assignment = ( [ "*" ] identifier [ "[" logical_or "]" ] | "*" "(" logical_or ")" ) "=" logical_or .
 
-expression = arithmetic [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) arithmetic ] .
+expression = bitwise_or [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) bitwise_or ] .
+
+bitwise_or = bitwise_and { "|" bitwise_and } .
+
+bitwise_and = arithmetic { "&" arithmetic } .
+
+logical_or  = logical_and { "||" logical_and } .
+
+logical_and = expression { "&&" expression } .
+
+
+shift      = arithmetic { ( "<<" | ">>" ) arithmetic } .
 
 arithmetic = term { ( "+" | "-" ) term } .
 
 term       = factor { ( "*" | "/" | "%" ) factor } .
 
-factor     = [ cast ] [ "-" ] [ "*" ]
-             ( "sizeof" "(" type ")" | literal | identifier | call | "(" expression ")" ) .
+factor     = [ cast ] [ "-" ] [ "~" ] [ "!" ] [ "*" ]
+             ( "sizeof" "(" type ")" | literal | identifier [ "[" logical_or "]" ] | call | "(" logical_or ")" ) .
 
 literal    = value | string .
 
-if         = "if" "(" expression ")"
+if         = "if" "(" logical_or ")"
                ( statement | "{" { statement } "}" )
              [ "else"
                ( statement | "{" { statement } "}" ) ] .
 
-while      = "while" "(" expression ")"
+while      = "while" "(" logical_or ")"
                ( statement | "{" { statement } "}" ) .
 
+for        = "for" "(" assignment ";" logical_or [ ";" assignment ] ")"
+               ( statement | "{" { statement } "}" ) .
+               
 procedure  = ( type | "void" ) identifier "(" [ variable { "," variable } [ "," "..." ] ] ")"
              ( ";" | "{" { variable ";" } { statement } "}" ) .
 
-call       = identifier "(" [ expression { "," expression } ] ")" .
+call       = identifier "(" [ logical_or { "," logical_or } ] ")" .
 
-return     = "return" [ expression ] .
+return     = "return" [ logical_or ] .
 ```
