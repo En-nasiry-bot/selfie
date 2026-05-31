@@ -56,7 +56,9 @@ value      = integer | character .
 
 statement  = assignment ";" | if | while | call ";" | return ";" .
 
-assignment = ( [ "*" ] identifier [ "[" logical_or "]" ] { "->" identifier } | "*" "(" logical_or ")" ) "=" logical_or .
+assignment = ( [ "*" ] access | "*" "(" logical_or ")" ) "=" logical_or .
+
+access     = identifier [ "[" logical_or "]" ] { "->" identifier } .
 
 expression = bitwise_or [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) bitwise_or ] .
 
@@ -76,7 +78,7 @@ arithmetic = term { ( "+" | "-" ) term } .
 term       = factor { ( "*" | "/" | "%" ) factor } .
 
 factor     = [ cast ] [ "-" ] [ "~" ] [ "!" ] [ "*" ]
-             ( "sizeof" "(" type ")" | literal | identifier [ "[" logical_or "]" ] { "->" identifier } | call | "(" logical_or ")" ) .
+             ( "sizeof" "(" type ")" | literal | access | call | "(" logical_or ")" ) .
 
 literal    = value | string .
 

@@ -780,6 +780,7 @@ uint64_t load_value(uint64_t* entry);
 
 uint64_t* get_variable_entry(char* variable);
 uint64_t  load_variable(char* variable);
+void      emit_struct_member_offset(uint64_t offset);
 uint64_t  compile_member_access(uint64_t type, uint64_t* struct_entry, uint64_t load_final);
 
 void compile_assignment(char* variable);
@@ -5285,6 +5286,20 @@ uint64_t load_variable(char* variable) {
   return load_value(get_variable_entry(variable));
 }
 
+void emit_struct_member_offset(uint64_t offset) {
+  if (offset != 0) {
+    if (is_signed_integer(offset, 12))
+      emit_addi(current_temporary(), current_temporary(), offset);
+    else {
+      load_integer(offset);
+
+      emit_add(previous_temporary(), previous_temporary(), current_temporary());
+
+      tfree(1);
+    }
+  }
+}
+
 uint64_t compile_member_access(uint64_t type, uint64_t* struct_entry, uint64_t load_final) {
   uint64_t* member_entry;
   char* member;
@@ -5308,8 +5323,7 @@ uint64_t compile_member_access(uint64_t type, uint64_t* struct_entry, uint64_t l
         type = UINT64_T;
         struct_entry = (uint64_t*) 0;
       } else {
-        if (get_value(member_entry) != 0)
-          emit_addi(current_temporary(), current_temporary(), get_value(member_entry));
+        emit_struct_member_offset(get_value(member_entry));
 
         type = get_type(member_entry);
         struct_entry = get_struct_entry(member_entry);
